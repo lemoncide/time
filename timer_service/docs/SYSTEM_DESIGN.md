@@ -64,12 +64,13 @@ graph TD
 | name | String(200) | 定时器名称 |
 | timer_type | String(20) | `one_time` / `daily` |
 | delay_seconds | Integer | 一次性定时器延迟（秒） |
-| trigger_time | String(5) | 每日触发时间 `HH:MM` UTC |
+| trigger_time | String(5) | 每日触发时间 `HH:MM`，用户本地时间 |
+| timezone | String(50) | IANA 时区名称，如 `Asia/Shanghai`（默认 `UTC`） |
 | webhook_url | String(500) | 可选回调 URL |
 | status | String(20) | `active` / `fired` / `cancelled` |
 | apscheduler_job_id | String(100) | 调度器 Job ID，用于取消 |
-| next_fire_at | DateTime | 下次触发时间 |
-| last_fired_at | DateTime | 上次触发时间 |
+| next_fire_at | DateTime | 下次触发时间（UTC，内部存储） |
+| last_fired_at | DateTime | 上次触发时间（UTC） |
 
 #### TimerEvent（触发审计日志）
 | 字段 | 类型 | 说明 |
@@ -83,10 +84,20 @@ graph TD
 ### 2.3 调度器服务 (`scheduler_service.py`)
 
 - 使用 `APScheduler.BackgroundScheduler`，在独立线程中运行
-- **一次性定时器**：`trigger='date'`，`run_date=next_fire_at`
-- **每日定时器**：`trigger='cron'`，`hour=HH, minute=MM`
+- **一次性定时器**：`trigger='date'`，`run_date=next_fire_at`（UTC）
+- **每日定时器**：`trigger='cron'`，`hour=HH, minute=MM`，**`timezone=用户IANA时区`**；APScheduler 在用户本地时区内计算下次触发时间，夏令时自动正确处理
 - `fire_timer(timer_id)` 在 APScheduler 线程中运行，需手动管理 Flask app context
 - 服务重启时调用 `restore_timers()` 从 DB 加载所有 `status=active` 的定时器重新调度
+
+**时区转换流程：**
+```
+用户输入 trigger_time="09:00" + timezone="Asia/Shanghai"
+    ↓ _next_daily_occurrence()  [使用 zoneinfo]
+next_fire_at = 今天 01:00 UTC（北京 09:00）
+    ↓ _add_daily_job()
+APScheduler cron(hour=9, minute=0, timezone="Asia/Shanghai")
+    → 每天北京时间 09:00 触发，夏令时自动调整
+```
 
 **线程安全关键点：**
 ```python
@@ -153,19 +164,19 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A([创建每日定时器]) --> B[写入数据库 status=active]
-    B --> C[计算首次触发时间 HH:MM UTC]
-    C --> D[调度器注册 cron 任务]
-    D -->|每天 HH:MM| E[执行触发回调]
+    A([创建每日定时器]) --> B[写入数据库 status=active\ntrigger_time=HH:MM 本地时间\ntimezone=IANA时区]
+    B --> C[zoneinfo 转换:\n本地HH:MM → UTC next_fire_at]
+    C --> D[APScheduler 注册 cron 任务\ncron timezone=用户时区]
+    D -->|每天本地HH:MM| E[执行触发回调]
     E --> F[写入触发记录]
     F --> G[status 保持 active]
-    G --> H[下次触发时间 +1 天]
+    G --> H[next_fire_at +1 天]
     H --> I{有 Webhook?}
     I -->|是| J[POST 回调请求]
     I -->|否| K[SSE 推送]
     J --> K
     K --> L([通知到达客户端])
-    L -->|次日同一时刻| E
+    L -->|次日同一本地时刻| E
 ```
 
 ---
