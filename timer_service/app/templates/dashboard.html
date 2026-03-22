@@ -1,0 +1,428 @@
+{% extends "base.html" %}
+{% block title %}控制台 — TimerService{% endblock %}
+
+{% macro status_badge(status) %}
+  {% if status == 'active' %}
+    <span class="badge bg-success">进行中</span>
+  {% elif status == 'fired' %}
+    <span class="badge bg-secondary">已触发</span>
+  {% elif status == 'cancelled' %}
+    <span class="badge bg-danger">已取消</span>
+  {% else %}
+    <span class="badge bg-secondary">{{ status }}</span>
+  {% endif %}
+{% endmacro %}
+
+{% block content %}
+<div class="row g-4">
+  <!-- Left: Create Timer -->
+  <div class="col-lg-4">
+    <div class="card shadow-sm">
+      <div class="card-header bg-primary text-white fw-semibold">
+        <i class="bi bi-plus-circle me-2"></i>创建定时器
+      </div>
+      <div class="card-body">
+        <form id="createForm">
+          <div class="mb-3">
+            <label class="form-label">名称</label>
+            <input type="text" id="timerName" class="form-control" required maxlength="200"
+                   placeholder="给定时器起个名字" />
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">类型</label>
+            <select id="timerType" class="form-select" onchange="toggleFields()">
+              <option value="one_time">一次性定时器</option>
+              <option value="daily">每日定时器</option>
+            </select>
+          </div>
+
+          <!-- One-time fields -->
+          <div id="oneTimeFields">
+            <div class="mb-3">
+              <label class="form-label">延迟时间（秒）</label>
+              <input type="number" id="delaySeconds" class="form-control"
+                     min="1" max="86400" value="60" placeholder="1 ~ 86400" />
+              <div class="form-text">最短 1 秒，最长 24 小时（86400 秒）</div>
+            </div>
+          </div>
+
+          <!-- Daily fields -->
+          <div id="dailyFields" style="display:none">
+            <div class="mb-3">
+              <label class="form-label">每日触发时间</label>
+              <input type="time" id="triggerTime" class="form-control" value="08:00" />
+            </div>
+            <div class="mb-3">
+              <label class="form-label">时区</label>
+              <select id="timezone" class="form-select">
+                <option value="UTC">UTC（协调世界时）</option>
+                <option value="Asia/Shanghai">UTC+8 北京 / 上海 / 香港</option>
+                <option value="Asia/Tokyo">UTC+9 东京</option>
+                <option value="Asia/Seoul">UTC+9 首尔</option>
+                <option value="Asia/Singapore">UTC+8 新加坡</option>
+                <option value="Asia/Kolkata">UTC+5:30 印度</option>
+                <option value="Europe/London">UTC+0/+1 伦敦</option>
+                <option value="Europe/Paris">UTC+1/+2 巴黎 / 柏林</option>
+                <option value="America/New_York">UTC-5/-4 纽约</option>
+                <option value="America/Los_Angeles">UTC-8/-7 洛杉矶</option>
+                <option value="America/Chicago">UTC-6/-5 芝加哥</option>
+                <option value="Australia/Sydney">UTC+10/+11 悉尼</option>
+                <option value="Pacific/Auckland">UTC+12/+13 奥克兰</option>
+              </select>
+              <div class="form-text" id="tzHint"></div>
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Webhook 回调 URL <small class="text-muted">(可选)</small></label>
+            <input type="url" id="webhookUrl" class="form-control"
+                   placeholder="https://your-server.com/callback" />
+          </div>
+
+          <div class="d-grid">
+            <button type="submit" class="btn btn-primary">
+              <i class="bi bi-alarm-fill me-1"></i>创建定时器
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- SSE connection status -->
+    <div class="card shadow-sm mt-3">
+      <div class="card-body py-2 px-3 d-flex align-items-center gap-2">
+        <span id="sseStatus" class="badge bg-secondary">未连接</span>
+        <small class="text-muted">实时通知状态</small>
+        <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="connectSSE()">重连</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right: Timer List -->
+  <div class="col-lg-8">
+    <div class="card shadow-sm">
+      <div class="card-header bg-white d-flex align-items-center justify-content-between">
+        <span class="fw-semibold"><i class="bi bi-list-ul me-2"></i>我的定时器</span>
+        <button class="btn btn-sm btn-outline-secondary" onclick="loadTimers()">
+          <i class="bi bi-arrow-clockwise"></i> 刷新
+        </button>
+      </div>
+      <div class="card-body p-0">
+        <div id="timerTable" class="table-responsive">
+          <table class="table table-hover mb-0 align-middle">
+            <thead class="table-light">
+              <tr>
+                <th>名称</th>
+                <th>类型</th>
+                <th>状态</th>
+                <th>下次触发</th>
+                <th>触发次数</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="timerBody">
+              {% for t in timers %}
+              <tr id="row-{{ t.id }}">
+                <td>{{ t.name }}</td>
+                <td>
+                  {% if t.timer_type == 'one_time' %}
+                    <span class="badge bg-info text-dark">一次性</span>
+                  {% else %}
+                    <span class="badge bg-warning text-dark">每日</span>
+                  {% endif %}
+                </td>
+                <td>{{ status_badge(t.status) }}</td>
+                <td class="small text-muted">
+                  {% if t.next_fire_at %}
+                    <span class="utc-time" data-utc="{{ t.next_fire_at.strftime('%Y-%m-%dT%H:%M:%S') }}Z">
+                      {{ t.next_fire_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC
+                    </span>
+                  {% else %}—{% endif %}
+                </td>
+                <td class="text-center" id="count-{{ t.id }}">{{ t.events | length }}</td>
+                <td>
+                  {% if t.status == 'active' %}
+                  <button class="btn btn-sm btn-outline-danger"
+                          onclick="cancelTimer({{ t.id }})">
+                    <i class="bi bi-x-circle"></i>
+                  </button>
+                  {% endif %}
+                </td>
+              </tr>
+              {% else %}
+              <tr id="emptyRow">
+                <td colspan="6" class="text-center text-muted py-4">
+                  <i class="bi bi-clock-history fs-3 d-block mb-2"></i>
+                  还没有定时器，点击左侧创建一个吧！
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container" class="position-fixed bottom-0 end-0 p-3" style="z-index:9999"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let   JWT_TOKEN     = {{ jwt_token | tojson }};
+const REFRESH_TOKEN = {{ refresh_token | tojson }};
+const API_BASE      = "/api/timers";
+let   esource       = null;
+
+// ── Timezone detection ────────────────────────
+const BROWSER_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+function formatLocalTime(isoUtcStr) {
+  if (!isoUtcStr) return "—";
+  const d = new Date(isoUtcStr.endsWith("Z") ? isoUtcStr : isoUtcStr + "Z");
+  const local = d.toLocaleString("zh-CN", {
+    timeZone: BROWSER_TZ,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    hour12: false,
+  });
+  return `${local} (${BROWSER_TZ})`;
+}
+
+function convertUtcTimesToLocal() {
+  document.querySelectorAll(".utc-time").forEach(el => {
+    const utc = el.dataset.utc;
+    if (utc) el.textContent = formatLocalTime(utc);
+  });
+}
+
+// ── Field toggle ──────────────────────────────
+function toggleFields() {
+  const type = document.getElementById("timerType").value;
+  document.getElementById("oneTimeFields").style.display = type === "one_time" ? "" : "none";
+  document.getElementById("dailyFields").style.display   = type === "daily"    ? "" : "none";
+  if (type === "daily") updateTzHint();
+}
+
+function updateTzHint() {
+  const tz = document.getElementById("timezone").value;
+  const hint = document.getElementById("tzHint");
+  if (tz === BROWSER_TZ) {
+    hint.textContent = "与您的浏览器时区一致";
+  } else {
+    hint.textContent = `浏览器时区：${BROWSER_TZ}`;
+  }
+}
+
+// Auto-select browser timezone in dropdown
+(function initTimezone() {
+  const sel = document.getElementById("timezone");
+  for (let opt of sel.options) {
+    if (opt.value === BROWSER_TZ) { opt.selected = true; break; }
+  }
+  sel.addEventListener("change", updateTzHint);
+  updateTzHint();
+})();
+
+// ── Create timer ──────────────────────────────
+document.getElementById("createForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const type = document.getElementById("timerType").value;
+  const body = {
+    name:        document.getElementById("timerName").value.trim(),
+    timer_type:  type,
+    webhook_url: document.getElementById("webhookUrl").value.trim() || null,
+  };
+  if (type === "one_time") {
+    body.delay_seconds = parseInt(document.getElementById("delaySeconds").value);
+  } else {
+    body.trigger_time = document.getElementById("triggerTime").value;
+    body.timezone     = document.getElementById("timezone").value;
+  }
+
+  try {
+    const res  = await apiFetch("POST", API_BASE, body);
+    const data = await res.json();
+    if (res.ok) {
+      showToast("定时器创建成功：" + data.name, "success");
+      addRow(data);
+      document.getElementById("createForm").reset();
+      toggleFields();
+    } else {
+      showToast((data.details || [data.error]).join("; "), "danger");
+    }
+  } catch (err) {
+    showToast("网络错误：" + err.message, "danger");
+  }
+});
+
+// ── Cancel timer ─────────────────────────────
+async function cancelTimer(id) {
+  if (!confirm("确定要取消该定时器吗？")) return;
+  const res = await apiFetch("DELETE", `${API_BASE}/${id}`);
+  if (res.ok) {
+    updateRowStatus(id, "cancelled");
+    showToast("定时器已取消", "warning");
+  }
+}
+
+// ── Reload timers ─────────────────────────────
+async function loadTimers() {
+  const res  = await apiFetch("GET", API_BASE);
+  const data = await res.json();
+  const tbody = document.getElementById("timerBody");
+  tbody.innerHTML = "";
+  if (data.timers.length === 0) {
+    tbody.innerHTML = `<tr id="emptyRow"><td colspan="6" class="text-center text-muted py-4">
+      <i class="bi bi-clock-history fs-3 d-block mb-2"></i>暂无定时器</td></tr>`;
+    return;
+  }
+  data.timers.forEach(addRow);
+}
+
+// ── SSE ───────────────────────────────────────
+function connectSSE() {
+  if (esource) esource.close();
+  const url = `${API_BASE}/stream?token=${encodeURIComponent(JWT_TOKEN)}`;
+  esource = new EventSource(url);
+
+  esource.onopen = () => {
+    document.getElementById("sseStatus").textContent = "已连接";
+    document.getElementById("sseStatus").className   = "badge bg-success";
+  };
+
+  esource.onmessage = (e) => {
+    const event = JSON.parse(e.data);
+    if (event.type === "timer_fired") {
+      showToast(`⏰ 定时器触发：${event.timer_name}`, "primary");
+      updateRowStatus(event.timer_id, event.status);
+      // increment count
+      const countEl = document.getElementById(`count-${event.timer_id}`);
+      if (countEl) countEl.textContent = parseInt(countEl.textContent || "0") + 1;
+    }
+  };
+
+  esource.onerror = () => {
+    document.getElementById("sseStatus").textContent = "连接断开";
+    document.getElementById("sseStatus").className   = "badge bg-danger";
+  };
+}
+
+// ── DOM helpers ───────────────────────────────
+function addRow(t) {
+  const emptyRow = document.getElementById("emptyRow");
+  if (emptyRow) emptyRow.remove();
+
+  const existing = document.getElementById(`row-${t.id}`);
+  if (existing) { existing.remove(); }
+
+  const tbody = document.getElementById("timerBody");
+  const tr    = document.createElement("tr");
+  tr.id       = `row-${t.id}`;
+
+  const typeBadge   = t.timer_type === "one_time"
+    ? '<span class="badge bg-info text-dark">一次性</span>'
+    : '<span class="badge bg-warning text-dark">每日</span>';
+  const nextFireStr = t.next_fire_at ? formatLocalTime(t.next_fire_at) : "—";
+  const cancelBtn   = t.status === "active"
+    ? `<button class="btn btn-sm btn-outline-danger" onclick="cancelTimer(${t.id})"><i class="bi bi-x-circle"></i></button>`
+    : "";
+
+  tr.innerHTML = `
+    <td>${escHtml(t.name)}</td>
+    <td>${typeBadge}</td>
+    <td id="status-${t.id}">${statusBadge(t.status)}</td>
+    <td class="small text-muted">${nextFireStr}</td>
+    <td class="text-center" id="count-${t.id}">${t.trigger_count}</td>
+    <td>${cancelBtn}</td>`;
+
+  tbody.prepend(tr);
+}
+
+function updateRowStatus(id, status) {
+  const el = document.getElementById(`status-${id}`);
+  if (el) el.innerHTML = statusBadge(status);
+  // Remove cancel button if no longer active
+  if (status !== "active") {
+    const row = document.getElementById(`row-${id}`);
+    if (row) {
+      const lastTd = row.querySelector("td:last-child");
+      if (lastTd) lastTd.innerHTML = "";
+    }
+  }
+}
+
+function statusBadge(status) {
+  const map = { active: "success", fired: "secondary", cancelled: "danger" };
+  const labels = { active: "进行中", fired: "已触发", cancelled: "已取消" };
+  return `<span class="badge bg-${map[status] || 'secondary'}">${labels[status] || status}</span>`;
+}
+
+function escHtml(str) {
+  return str.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+            .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+}
+
+// ── Fetch wrapper（自动刷新 token）────────────
+async function apiFetch(method, url, body, retry = true) {
+  const opts = {
+    method,
+    headers: {
+      "Content-Type":  "application/json",
+      "Authorization": "Bearer " + JWT_TOKEN,
+    },
+  };
+  if (body) opts.body = JSON.stringify(body);
+
+  const res = await fetch(url, opts);
+
+  if (res.status === 401 && retry) {
+    const refreshed = await _refreshToken();
+    if (refreshed) return apiFetch(method, url, body, false);
+    // 刷新也失败，跳转登录
+    window.location.href = "/login";
+  }
+  return res;
+}
+
+async function _refreshToken() {
+  try {
+    const res = await fetch("/api/auth/refresh", {
+      method: "POST",
+      headers: {
+        "Content-Type":  "application/json",
+        "Authorization": "Bearer " + REFRESH_TOKEN,
+      },
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    JWT_TOKEN = data.access_token;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ── Toast ─────────────────────────────────────
+function showToast(msg, type = "info") {
+  const container = document.getElementById("toast-container");
+  const id = "toast-" + Date.now();
+  container.insertAdjacentHTML("beforeend", `
+    <div id="${id}" class="toast align-items-center text-bg-${type} border-0 show mb-2" role="alert">
+      <div class="d-flex">
+        <div class="toast-body">${escHtml(msg)}</div>
+        <button type="button" class="btn-close btn-close-white me-2 m-auto"
+                data-bs-dismiss="toast"></button>
+      </div>
+    </div>`);
+  setTimeout(() => document.getElementById(id)?.remove(), 5000);
+}
+
+// ── Init ──────────────────────────────────────
+connectSSE();
+convertUtcTimesToLocal();
+</script>
+{% endblock %}

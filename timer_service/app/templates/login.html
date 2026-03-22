@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}登录 — TimerService{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-5 col-lg-4">
+    <div class="card shadow-sm mt-5">
+      <div class="card-body p-4">
+        <h4 class="card-title mb-4 text-center">
+          <i class="bi bi-box-arrow-in-right me-2 text-primary"></i>用户登录
+        </h4>
+        <form method="POST" action="/login">
+          <div class="mb-3">
+            <label class="form-label">用户名</label>
+            <input type="text" name="username" class="form-control" required autofocus
+                   placeholder="请输入用户名" />
+          </div>
+          <div class="mb-3">
+            <label class="form-label">密码</label>
+            <input type="password" name="password" class="form-control" required
+                   placeholder="请输入密码" />
+          </div>
+          <div class="d-grid mt-4">
+            <button type="submit" class="btn btn-primary">登录</button>
+          </div>
+        </form>
+        <hr />
+        <p class="text-center mb-0 small text-muted">
+          还没有账户？<a href="/register">立即注册</a>
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

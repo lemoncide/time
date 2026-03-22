@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Test coverage
+.coverage
+htmlcov/
+
+# Flask instance (SQLite DB, secrets)
+instance/
