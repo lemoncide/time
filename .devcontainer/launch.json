@@ -1,0 +1,17 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run TimerService",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/timer_service/run.py",
+      "cwd": "${workspaceFolder}/timer_service",
+      "console": "integratedTerminal",
+      "env": {
+        "FLASK_ENV": "development",
+        "FLASK_DEBUG": "1"
+      }
+    }
+  ]
+}

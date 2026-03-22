@@ -144,9 +144,13 @@ def callback():
 1. 填写名称
 2. 选择类型：
    - **一次性定时器**：输入延迟秒数（1–86400）
-   - **每日定时器**：选择每天触发的时间（UTC，格式 HH:MM）
+   - **每日定时器**：
+     - 选择每天触发的时间（格式 HH:MM，**本地时间**）
+     - 从下拉菜单选择时区（默认自动检测浏览器时区）
 3. 可选：填写 Webhook 回调 URL
 4. 点击"创建定时器"
+
+> **时区说明**：每日定时器填写的是你所在时区的本地时间，无需手动换算 UTC。例如在北京时间 09:00 提醒，直接填 `09:00`，时区选 `Asia/Shanghai` 即可。
 
 **查看定时器（右侧面板）：**
 
@@ -155,6 +159,8 @@ def callback():
 | 进行中（绿色） | 定时器激活，等待触发 |
 | 已触发（灰色） | 一次性定时器已完成 |
 | 已取消（红色） | 用户手动取消 |
+
+> **下次触发时间**：控制台展示的时间为你所选时区的本地时间。
 
 **实时通知：** 定时器触发时，页面右下角会自动弹出通知 Toast，无需刷新页面。
 
@@ -268,11 +274,25 @@ curl -X POST http://localhost:5000/api/timers \
   -d '{
     "name": "每日早报",
     "timer_type": "daily",
-    "trigger_time": "09:00"
+    "trigger_time": "09:00",
+    "timezone": "Asia/Shanghai"
   }'
 ```
 
-> `trigger_time` 使用 **UTC 时间**。北京时间 17:00 对应 UTC 09:00。
+> `trigger_time` 使用**用户本地时间**（HH:MM），`timezone` 为 IANA 时区名称，不填默认 `UTC`。
+> 例如北京时间每天早上 9 点提醒：`trigger_time="09:00"`, `timezone="Asia/Shanghai"`，无需手动换算 UTC。
+
+常用时区参考：
+
+| 城市 | timezone |
+|------|----------|
+| 北京 / 上海 | `Asia/Shanghai` |
+| 香港 | `Asia/Hong_Kong` |
+| 东京 | `Asia/Tokyo` |
+| 纽约 | `America/New_York` |
+| 伦敦 | `Europe/London` |
+| 巴黎 | `Europe/Paris` |
+| UTC | `UTC` |
 
 ### 查看所有定时器
 
@@ -405,7 +425,10 @@ pytest tests/test_timers.py -v
 ## 常见问题
 
 **Q: 创建每日定时器时应该填什么时间？**
-A: 填写 UTC 时间，格式 `HH:MM`。例如北京时间每天上午 9 点 = UTC `01:00`。
+A: 填写你所在时区的**本地时间**，格式 `HH:MM`，同时指定 `timezone`（IANA 格式）。例如想在北京时间每天上午 9 点提醒：`trigger_time="09:00"`，`timezone="Asia/Shanghai"`。后端会自动换算 UTC，无需手动计算。
+
+**Q: 忘记填 timezone 怎么办？**
+A: 不填或填空时默认为 `UTC`。此时 `trigger_time` 将被视为 UTC 时间。北京用户如填 `09:00` + 不填时区，定时器会在北京时间 17:00 触发（UTC+8 偏移）。
 
 **Q: 定时器触发后消失了？**
 A: 一次性定时器触发后状态变为 `fired`，不再触发，这是正常行为。每日定时器会持续触发。
