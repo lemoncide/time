@@ -1,0 +1,76 @@
+from flask import Blueprint, jsonify, request
+from flask_jwt_extended import (
+    create_access_token,
+    create_refresh_token,
+    get_jwt_identity,
+    jwt_required,
+)
+
+from . import db
+from .models import User
+
+auth_bp = Blueprint("auth", __name__)
+
+
+@auth_bp.route("/register", methods=["POST"])
+def register():
+    data = request.get_json(silent=True) or {}
+    errors = _validate_register(data)
+    if errors:
+        return jsonify({"error": "Validation failed", "details": errors}), 400
+
+    if User.query.filter_by(username=data["username"]).first():
+        return jsonify({"error": "Username already exists"}), 409
+
+    user = User(username=data["username"])
+    user.set_password(data["password"])
+    db.session.add(user)
+    db.session.commit()
+
+    return jsonify({"msg": "User created", "user_id": user.id}), 201
+
+
+@auth_bp.route("/login", methods=["POST"])
+def login():
+    data = request.get_json(silent=True) or {}
+    username = data.get("username", "").strip()
+    password = data.get("password", "")
+
+    if not username or not password:
+        return jsonify({"error": "Username and password are required"}), 400
+
+    user = User.query.filter_by(username=username).first()
+    if user is None or not user.check_password(password):
+        return jsonify({"error": "Invalid credentials"}), 401
+
+    access_token = create_access_token(identity=str(user.id))
+    refresh_token = create_refresh_token(identity=str(user.id))
+    return jsonify({"access_token": access_token, "refresh_token": refresh_token}), 200
+
+
+@auth_bp.route("/refresh", methods=["POST"])
+@jwt_required(refresh=True)
+def refresh():
+    user_id = get_jwt_identity()
+    new_access_token = create_access_token(identity=user_id)
+    return jsonify({"access_token": new_access_token}), 200
+
+
+def _validate_register(data: dict) -> list[str]:
+    errors = []
+    username = data.get("username", "").strip()
+    password = data.get("password", "")
+
+    if not username:
+        errors.append("Username is required")
+    elif len(username) < 3:
+        errors.append("Username must be at least 3 characters")
+    elif len(username) > 80:
+        errors.append("Username must be at most 80 characters")
+
+    if not password:
+        errors.append("Password is required")
+    elif len(password) < 8:
+        errors.append("Password must be at least 8 characters")
+
+    return errors
